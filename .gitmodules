@@ -1,0 +1,3 @@
+[submodule "FATE"]
+	path = FATE
+	url = https://github.com/jannie601H/FATE.git

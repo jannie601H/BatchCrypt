@@ -1,3 +1,4 @@
+import sys, os
 import time
 import argparse
 import tensorflow as tf
@@ -10,6 +11,8 @@ from functools import reduce
 
 from ftl import augmentation
 from ftl.encryption import paillier, encryption
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # tf.enable_eager_execution()
 

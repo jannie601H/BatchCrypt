@@ -125,7 +125,7 @@ def quantize(party, bit_width=16):
     for component in party:
         x, _ = encryption.quantize_matrix(component, bit_width=bit_width)
         result.append(x)
-    return np.array(result)
+    return result
 
 
 def quantize_per_layer(party, r_maxs, bit_width=16):
@@ -133,21 +133,25 @@ def quantize_per_layer(party, r_maxs, bit_width=16):
     for component, r_max in zip(party, r_maxs):
         x, _ = encryption.quantize_matrix_stochastic(component, bit_width=bit_width, r_max=r_max)
         result.append(x)
-    return np.array(result)
+    return result
 
 
 def unquantize(party, bit_width=16, r_max=0.5):
     result = []
     for component in party:
+        if isinstance(component, tf.Tensor):
+            component = component.numpy()
         result.append(encryption.unquantize_matrix(component, bit_width=bit_width, r_max=r_max).astype(np.float32))
-    return np.array(result)
+    return result
 
 
 def unquantize_per_layer(party, r_maxs, bit_width=16):
     result = []
     for component, r_max in zip(party, r_maxs):
+        if isinstance(component, tf.Tensor):
+            component = component.numpy()
         result.append(encryption.unquantize_matrix(component, bit_width=bit_width, r_max=r_max).astype(np.float32))
-    return np.array(result)
+    return result
 
 
 if __name__ == '__main__':
@@ -159,17 +163,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # parser.add_argument('--experiment', type=str, required=True,
     #                     choices=["plain", "batch", "only_quan", "aciq_quan"])
-    parser.add_argument('--experiment', type=str, default="plain",
-                        choices=["plain", "batch", "only_quan", "aciq_quan"])
+    parser.add_argument('--experiment', type=str, default="clip_quan",
+                        choices=["plain", "batch", "only_quan", "aciq_quan", "clip_quan"])
     parser.add_argument('--num_clients', type=int, default=10)
-    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--num_epochs', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--q_width', type=int, default=4)
-    parser.add_argument('--clip', type=float, default=0.1)
+    parser.add_argument('--clip', type=float, default=0.7)
     args = parser.parse_args()
 
     options = vars(args)
     output_name = "fmnist_" + "_".join([ "{}_{}".format(key, options[key]) for key in options ])
+
+    log_dir = os.path.join("logs", output_name)
+    os.makedirs(log_dir, exist_ok=True)
 
     # keep results for plotting
     train_loss_results = []
@@ -363,6 +370,24 @@ if __name__ == '__main__':
 
                 grads = unquantize_per_layer(grads, r_maxs, bit_width=q_width)
 
+            elif args.experiment == "clip_quan":
+                grads_batch_clients = [
+                        clip_gradients(item, -1 * clip / num_clients, clip / num_clients)
+                        for item in grads_batch_clients
+                        ]
+
+                grads_batch_clients = [
+                        quantize(item, bit_width=q_width)
+                        for item in grads_batch_clients
+                        ]
+
+                # aggregation
+                client_weight = 1.0 / num_clients
+                grads = aggregate_gradients(grads_batch_clients)
+                loss_value = aggregate_losses([item * client_weight for item in loss_batch_clients])
+
+                grads = unquantize(grads, bit_width=q_width, r_max=clip)
+
             ######
             optimizer.apply_gradients(zip(grads, model.trainable_variables),
                                       global_step)
@@ -416,34 +441,34 @@ if __name__ == '__main__':
         model.save_weights("model_{}_e{:03d}.h5".format(output_name, epoch))
         print("Saved model to disk")
 
-    np.savetxt('train_loss_{}.txt'.format(output_name), train_loss_results)
-    np.savetxt('train_accuracy_{}.txt'.format(output_name), train_accuracy_results)
-    np.savetxt('test_loss_{}.txt'.format(output_name), test_loss_results)
-    np.savetxt('test_accuracy_{}.txt'.format(output_name), test_accuracy_results)
-    np.savetxt('epoch_time_{}.txt'.format(output_name), epoch_time_array)
-    np.savetxt('sparsity_{}.txt'.format(output_name), sparsity_array_per_layer)
+    np.savetxt(os.path.join(log_dir, 'train_loss.txt'), train_loss_results)
+    np.savetxt(os.path.join(log_dir, 'train_accuracy.txt'), train_accuracy_results)
+    np.savetxt(os.path.join(log_dir, 'test_loss.txt'), test_loss_results)
+    np.savetxt(os.path.join(log_dir, 'test_accuracy.txt'), test_accuracy_results)
+    np.savetxt(os.path.join(log_dir, 'epoch_time.txt'), epoch_time_array)
+    np.savetxt(os.path.join(log_dir, 'sparsity.txt'), sparsity_array_per_layer)
     
     # serialize model to JSON
-    model_json = model.to_json()
-    with open("model_{}.json".format(output_name), "w") as json_file:
-        json_file.write(model_json)
+#    model_json = model.to_json()
+#    with open("model_{}.json".format(output_name), "w") as json_file:
+#        json_file.write(model_json)
     # serialize weights to HDF5
-    model.save_weights("model_{}.h5".format(output_name))
-    print("Saved model to disk")
+#    model.save_weights(os.path.join(log_dir, "model.h5"))
+#    print("Saved model to disk")
 
 # save total time
 total_train_time = time.time() - total_train_start
 print("Total training time: {:.2f} seconds".format(total_train_time))
-with open("total_time_{}.txt".format(output_name), "w") as f:
+with open(os.path.join(log_dir, "total_time.txt"), "w") as f:
     f.write(str(total_train_time))
 
-fig, axes = plt.subplots(2, sharex=True, figsize=(12, 8))
-fig.suptitle('Training Metrics')
+# fig, axes = plt.subplots(2, sharex=True, figsize=(12, 8))
+# fig.suptitle('Training Metrics')
 
-axes[0].set_ylabel("Loss", fontsize=14)
-axes[0].plot(train_loss_results)
+# axes[0].set_ylabel("Loss", fontsize=14)
+# axes[0].plot(train_loss_results)
 
-axes[1].set_ylabel("Accuracy", fontsize=14)
-axes[1].set_xlabel("Epoch", fontsize=14)
-axes[1].plot(train_accuracy_results)
-plt.show()
+# axes[1].set_ylabel("Accuracy", fontsize=14)
+# axes[1].set_xlabel("Epoch", fontsize=14)
+# axes[1].plot(train_accuracy_results)
+# plt.show()

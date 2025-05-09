@@ -1,19 +1,22 @@
+import sys, os
 import time
 import argparse
 import tensorflow as tf
 from tensorflow import keras
+import pickle
 import numpy as np
 from sklearn.metrics import accuracy_score
 import pysnooper
 
 from functools import reduce
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ftl import augmentation
 from ftl.encryption import paillier, encryption
 
-tf.enable_eager_execution()
+# tf.enable_eager_execution()
 
-from tensorflow import contrib
+# from tensorflow import contrib
 
 from joblib import Parallel, delayed
 
@@ -21,7 +24,8 @@ import multiprocessing
 
 N_JOBS = multiprocessing.cpu_count()
 
-tfe = contrib.eager
+# tfe = contrib.eager
+tfe = tf.keras.metrics
 
 print("TensorFlow version: {}".format(tf.__version__))
 print("Eager execution: {}".format(tf.executing_eagerly()))
@@ -131,7 +135,8 @@ def grad(model, inputs, targets):
     return loss_value, tape.gradient(loss_value, model.trainable_variables)
 
 
-optimizer = keras.optimizers.RMSprop(learning_rate=0.0001, decay=1e-6)
+# optimizer = keras.optimizers.RMSprop(learning_rate=0.0001, decay=1e-6)
+optimizer = keras.optimizers.RMSprop(learning_rate=0.0001)
 global_step = tf.Variable(0)
 
 
@@ -180,7 +185,7 @@ def batch_dec_per_layer(privatekey, party, og_shapes, r_maxs, bit_width=16, batc
         result.append(
             encryption.decrypt_matrix_batch(privatekey, layer, og_shape, batch_size=batch_size, bit_width=bit_width,
                                             r_max=r_max).astype(np.float32))
-    return np.array(result)
+    return result
 
 
 def quantize(party, bit_width=16, r_max=0.5):
@@ -223,14 +228,14 @@ def unquantize_per_layer(party, r_maxs, bit_width=16):
 
 if __name__ == '__main__':
     seed = 123
-    tf.random.set_random_seed(seed)
+    tf.random.set_seed(seed)
     np.random.seed(seed)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--experiment', type=str, default='plain_alex',
+    parser.add_argument('--experiment', type=str, default='en_alex_batch',
                         choices=["plain_alex", "plain_alex_en", "en_alex_batch", "aciq_quan"])
     parser.add_argument('--num_clients', type=int, default=10)
-    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--num_epochs', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--q_width', type=int, default=16)
     args = parser.parse_args()
@@ -247,8 +252,10 @@ if __name__ == '__main__':
     publickey, privatekey = paillier.PaillierKeypair.generate_keypair(n_length=2048)
 
     for epoch in range(num_epochs):
-        epoch_train_loss_avg = tfe.metrics.Mean()
-        epoch_train_accuracy = tfe.metrics.Accuracy()
+        # epoch_train_loss_avg = tfe.metrics.Mean()
+        # epoch_train_accuracy = tfe.metrics.Accuracy()
+        epoch_train_loss_avg = tf.keras.metrics.Mean()
+        epoch_train_accuracy = tf.keras.metrics.Accuracy()
 
         # train_dataset_0, train_dataset_1 = build_datasets()
         train_dataset_clients = build_datasets(args.num_clients)
@@ -327,8 +334,8 @@ if __name__ == '__main__':
 
                 layers_size = np.array([_.size for _ in grads_batch_clients[0]])
                 clipping_thresholds = theta * (
-                            np.sum(grads_batch_clients_mean_square * layers_size, 0) / (layers_size * num_clients)
-                            - (np.sum(grads_batch_clients_mean * layers_size, 0) / (layers_size * num_clients)) ** 2) ** 0.5
+                            np.sum(grads_batch_clients_mean_square * layers_size, 0) / (layers_size * args.num_clients)
+                            - (np.sum(grads_batch_clients_mean * layers_size, 0) / (layers_size * args.num_clients)) ** 2) ** 0.5
 
                 print("clipping_thresholds", clipping_thresholds)
 

@@ -1,21 +1,28 @@
+import sys, os
 import time
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
 from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
-import pysnooper
+# import pysnooper
 import argparse
 from functools import reduce
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from ftl import augmentation
 from ftl.encryption import paillier, encryption
 from joblib import Parallel, delayed
 
-tf.enable_eager_execution()
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = '2'
 
-from tensorflow import contrib
+# tf.enable_eager_execution()
 
-tfe = contrib.eager
+# from tensorflow import contrib
+
+# tfe = contrib.eager
+tfe = tf.keras.metrics
 
 
 print("TensorFlow version: {}".format(tf.__version__))
@@ -87,7 +94,8 @@ def grad(model, inputs, targets):
     return loss_value, tape.gradient(loss_value, model.trainable_variables)
 
 
-optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
+# optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 global_step = tf.Variable(0)
 
 
@@ -144,13 +152,14 @@ def unquantize_per_layer(party, r_maxs, bit_width=16):
 
 if __name__ == '__main__':
     seed = 123
-    tf.random.set_random_seed(seed)
+    # tf.random.set_random_seed(seed)
+    tf.random.set_seed(seed)
     np.random.seed(seed)
 
     parser = argparse.ArgumentParser()
     # parser.add_argument('--experiment', type=str, required=True,
     #                     choices=["plain", "batch", "only_quan", "aciq_quan"])
-    parser.add_argument('--experiment', type=str, default="plain",
+    parser.add_argument('--experiment', type=str, default="batch",
                         choices=["plain", "batch", "only_quan", "aciq_quan"])
     parser.add_argument('--num_clients', type=int, default=10)
     parser.add_argument('--num_epochs', type=int, default=10)
@@ -181,8 +190,10 @@ if __name__ == '__main__':
 
 
     for epoch in range(num_epochs):
-        epoch_loss_avg = tfe.metrics.Mean()
-        epoch_accuracy = tfe.metrics.Accuracy()
+        # epoch_loss_avg = tfe.metrics.Mean()
+        epoch_loss_avg = tf.keras.metrics.Mean()
+        # epoch_accuracy = tfe.metrics.Accuracy()
+        epoch_accuracy = tf.keras.metrics.Accuracy()
 
         train_dataset_clients = build_datasets(num_clients)
 
@@ -349,6 +360,9 @@ if __name__ == '__main__':
             ######
             optimizer.apply_gradients(zip(grads, model.trainable_variables),
                                       global_step)
+
+            for i, g in enumerate(grads):
+                print(f"Layer {i} grad max: {np.max(g):.6f}, min: {np.min(g):.6f}")
 
             # Track progress
             epoch_loss_avg(loss_value)  # add current batch loss

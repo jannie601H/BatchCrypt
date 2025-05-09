@@ -9,10 +9,9 @@ import pysnooper
 
 from functools import reduce
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ftl import augmentation
 from ftl.encryption import paillier, encryption
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # tf.enable_eager_execution()
 

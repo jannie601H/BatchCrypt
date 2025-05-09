@@ -159,13 +159,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # parser.add_argument('--experiment', type=str, required=True,
     #                     choices=["plain", "batch", "only_quan", "aciq_quan"])
-    parser.add_argument('--experiment', type=str, default="batch",
+    parser.add_argument('--experiment', type=str, default="plain",
                         choices=["plain", "batch", "only_quan", "aciq_quan"])
     parser.add_argument('--num_clients', type=int, default=10)
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=100)
-    parser.add_argument('--q_width', type=int, default=16)
-    parser.add_argument('--clip', type=float, default=0.5)
+    parser.add_argument('--q_width', type=int, default=4)
+    parser.add_argument('--clip', type=float, default=0.1)
     args = parser.parse_args()
 
     options = vars(args)
@@ -187,6 +187,12 @@ if __name__ == '__main__':
 
     loss_array = []
     accuracy_array = []
+    epoch_time_array = []
+    sparsity_array_per_layer = []
+    clip_thresholds_array = []
+    rmax_array = []
+
+    total_train_start = time.time()
 
 
     for epoch in range(num_epochs):
@@ -372,6 +378,22 @@ if __name__ == '__main__':
                            test_labels)
 
             loss_array.append(loss_value)
+
+            elapsed_time = time.time() - start_t
+            epoch_time_array.append(elapsed_time)
+
+            # gradient sparsity per layer
+            zero_ratio_per_layer = [np.mean(g == 0) for g in grads]
+            sparsity_array_per_layer.append(zero_ratio_per_layer)
+            print("Gradient sparsity per layer: ", zero_ratio_per_layer)
+
+            # save clipping threasholds, r_maxs
+            if args.experiment in ["batch"]:
+                clip_thresholds_array.append(clipping_thresholds)
+                rmax_array.append(r_maxs)
+                print("Clipping thresholds per layer: ", clipping_thresholds)
+                print("r_maxs per layer: ", r_maxs)
+
             accuracy_value = epoch_accuracy.result().numpy()
             accuracy_array.append(accuracy_value)
 
@@ -398,7 +420,9 @@ if __name__ == '__main__':
     np.savetxt('train_accuracy_{}.txt'.format(output_name), train_accuracy_results)
     np.savetxt('test_loss_{}.txt'.format(output_name), test_loss_results)
     np.savetxt('test_accuracy_{}.txt'.format(output_name), test_accuracy_results)
-
+    np.savetxt('epoch_time_{}.txt'.format(output_name), epoch_time_array)
+    np.savetxt('sparsity_{}.txt'.format(output_name), sparsity_array_per_layer)
+    
     # serialize model to JSON
     model_json = model.to_json()
     with open("model_{}.json".format(output_name), "w") as json_file:
@@ -407,7 +431,11 @@ if __name__ == '__main__':
     model.save_weights("model_{}.h5".format(output_name))
     print("Saved model to disk")
 
-
+# save total time
+total_train_time = time.time() - total_train_start
+print("Total training time: {:.2f} seconds".format(total_train_time))
+with open("total_time_{}.txt".format(output_name), "w") as f:
+    f.write(str(total_train_time))
 
 fig, axes = plt.subplots(2, sharex=True, figsize=(12, 8))
 fig.suptitle('Training Metrics')

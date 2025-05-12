@@ -31,8 +31,37 @@ print("TensorFlow version: {}".format(tf.__version__))
 print("Eager execution: {}".format(tf.executing_eagerly()))
 
 # load fashion mnist dataset
-fashion_mnist = keras.datasets.fashion_mnist
-(train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
+# fashion_mnist = keras.datasets.fashion_mnist
+# (train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
+# train_labels = train_labels.astype(np.int32)
+# test_labels = test_labels.astype(np.int32)
+
+def load_fashion_mnist_from_local(path="/root/.keras/datasets"):
+    files = {
+            "train_images": "train-images-idx3-ubyte.gz",
+            "train_labels": "train-labels-idx1-ubyte.gz",
+            "test_images":  "t10k-images-idx3-ubyte.gz",
+            "test_labels":  "t10k-labels-idx1-ubyte.gz",
+            }
+
+    def load_images(filename):
+        with gzip.open(os.path.join(path, filename), 'rb') as f:
+            data = np.frombuffer(f.read(), np.uint8, offset=16)
+        return data.reshape(-1, 28, 28)
+
+    def load_labels(filename):
+        with gzip.open(os.path.join(path, filename), 'rb') as f:
+            data = np.frombuffer(f.read(), np.uint8, offset=8)
+        return data
+
+    x_train = load_images(files["train_images"])
+    y_train = load_labels(files["train_labels"])
+    x_test = load_images(files["test_images"])
+    y_test = load_labels(files["test_labels"])
+    return (x_train, y_train), (x_test, y_test)
+
+# data loading
+(train_images, train_labels), (test_images, test_labels) = load_fashion_mnist_from_local("/root/.keras/datasets")
 train_labels = train_labels.astype(np.int32)
 test_labels = test_labels.astype(np.int32)
 
@@ -164,13 +193,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # parser.add_argument('--experiment', type=str, required=True,
     #                     choices=["plain", "batch", "only_quan", "aciq_quan"])
-    parser.add_argument('--experiment', type=str, default="clip_quan",
+    parser.add_argument('--experiment', type=str, default="batch",
                         choices=["plain", "batch", "only_quan", "aciq_quan", "clip_quan"])
     parser.add_argument('--num_clients', type=int, default=10)
     parser.add_argument('--num_epochs', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=100)
-    parser.add_argument('--q_width', type=int, default=4)
-    parser.add_argument('--clip', type=float, default=0.7)
+    parser.add_argument('--q_width', type=int, default=8)
+    parser.add_argument('--clip', type=float, default=0.3)
     args = parser.parse_args()
 
     options = vars(args)

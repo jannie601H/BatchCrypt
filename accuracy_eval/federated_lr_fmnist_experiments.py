@@ -1,10 +1,11 @@
 import sys, os
 import time
+import gzip
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
 from sklearn.metrics import accuracy_score
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 # import pysnooper
 import argparse
 from functools import reduce
@@ -389,8 +390,7 @@ if __name__ == '__main__':
                 grads = unquantize(grads, bit_width=q_width, r_max=clip)
 
             ######
-            optimizer.apply_gradients(zip(grads, model.trainable_variables),
-                                      global_step)
+            optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
             for i, g in enumerate(grads):
                 print(f"Layer {i} grad max: {np.max(g):.6f}, min: {np.min(g):.6f}")
@@ -413,11 +413,11 @@ if __name__ == '__main__':
             print("Gradient sparsity per layer: ", zero_ratio_per_layer)
 
             # save clipping threasholds, r_maxs
-            if args.experiment in ["batch"]:
-                clip_thresholds_array.append(clipping_thresholds)
-                rmax_array.append(r_maxs)
-                print("Clipping thresholds per layer: ", clipping_thresholds)
-                print("r_maxs per layer: ", r_maxs)
+            # if args.experiment in ["batch"]:
+            #     clip_thresholds_array.append(clipping_thresholds)
+            #     rmax_array.append(r_maxs)
+            #     print("Clipping thresholds per layer: ", clipping_thresholds)
+            #     print("r_maxs per layer: ", r_maxs)
 
             accuracy_value = epoch_accuracy.result().numpy()
             accuracy_array.append(accuracy_value)
@@ -438,7 +438,7 @@ if __name__ == '__main__':
             print("Epoch {:03d}: Loss: {:.3f}, Accuracy: {:.3%}".format(epoch,
                                                                         epoch_loss_avg.result(),
                                                                         epoch_accuracy.result()))
-        model.save_weights("model_{}_e{:03d}.h5".format(output_name, epoch))
+        model.save_weights("model_{}_e{:03d}.weights.h5".format(output_name, epoch))
         print("Saved model to disk")
 
     np.savetxt(os.path.join(log_dir, 'train_loss.txt'), train_loss_results)

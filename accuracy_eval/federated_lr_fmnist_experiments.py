@@ -32,10 +32,10 @@ print("TensorFlow version: {}".format(tf.__version__))
 print("Eager execution: {}".format(tf.executing_eagerly()))
 
 # load fashion mnist dataset
-# fashion_mnist = keras.datasets.fashion_mnist
-# (train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
-# train_labels = train_labels.astype(np.int32)
-# test_labels = test_labels.astype(np.int32)
+fashion_mnist = keras.datasets.fashion_mnist
+(train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
+train_labels = train_labels.astype(np.int32)
+test_labels = test_labels.astype(np.int32)
 
 def load_fashion_mnist_from_local(path="/root/.keras/datasets"):
     files = {
@@ -62,7 +62,7 @@ def load_fashion_mnist_from_local(path="/root/.keras/datasets"):
     return (x_train, y_train), (x_test, y_test)
 
 # data loading
-(train_images, train_labels), (test_images, test_labels) = load_fashion_mnist_from_local("/root/.keras/datasets")
+#(train_images, train_labels), (test_images, test_labels) = load_fashion_mnist_from_local("/root/.keras/datasets")
 train_labels = train_labels.astype(np.int32)
 test_labels = test_labels.astype(np.int32)
 
@@ -184,37 +184,6 @@ def unquantize_per_layer(party, r_maxs, bit_width=16):
         result.append(encryption.unquantize_matrix(component, bit_width=bit_width, r_max=r_max).astype(np.float32))
     return result
 
-def extract_sparse_components(tensor):
-    """
-    input: multi dimension numpy array
-    output: (non-zero index array, value array)
-    """
-    flat_tensor = tensor.flatten()
-    nonzero_indices = np.nonzero(flat_tensor)[0]
-    nonzero_values = flat_tensor[nonzero_indices]
-    return nonzero_indices, nonzero_values
-
-def reconstruct_dense_from_sparse(indices, values, shape):
-    """
-    input: non-zero index array, value array, original shape
-    output: restored dense numpy array
-    """
-    flat = np.zeros(np.prod(shape), dtype=np.float32)
-    flat[indices] = values
-    return flat.reshape(shape)
-
-def get_encrypted_value_size(enc_val):
-    """
-    return the size in bytes of a single encrypted value
-    """
-    return sys.getsizeof(enc_val)
-
-def aggregate_ciphertexts(cipher_list):
-    """
-    cipher_list: Paillier ciphertext object list
-    """
-    return reduce(encryption.add_ciphertexts, cipher_list)
-
 if __name__ == '__main__':
     seed = 123
     # tf.random.set_random_seed(seed)
@@ -225,9 +194,9 @@ if __name__ == '__main__':
     # parser.add_argument('--experiment', type=str, required=True,
     #                     choices=["plain", "batch", "only_quan", "aciq_quan"])
     parser.add_argument('--experiment', type=str, default="batch",
-                        choices=["plain", "batch", "only_quan", "aciq_quan", "clip_quan", "sparse_he"])
+                        choices=["plain", "batch", "only_quan", "aciq_quan", "clip_quan", "batch_zero"])
     parser.add_argument('--num_clients', type=int, default=10)
-    parser.add_argument('--num_epochs', type=int, default=20)
+    parser.add_argument('--num_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--q_width', type=int, default=8)
     parser.add_argument('--clip', type=float, default=0.3)
@@ -257,14 +226,17 @@ if __name__ == '__main__':
     accuracy_array = []
     epoch_time_array = []
     sparsity_array_per_layer = []
-    clip_thresholds_array = []
-    rmax_array = []
-    comm_log_array = []
+    # clip_thresholds_array = []
+    # rmax_array = []
+    # comm_log_array = []
+    skip_log_array = []
+
 
     total_train_start = time.time()
 
 
     for epoch in range(num_epochs):
+        batch_idx = 0
         # epoch_loss_avg = tfe.metrics.Mean()
         epoch_loss_avg = tf.keras.metrics.Mean()
         # epoch_accuracy = tfe.metrics.Accuracy()
@@ -273,6 +245,7 @@ if __name__ == '__main__':
         train_dataset_clients = build_datasets(num_clients)
 
         for data_clients in zip(*train_dataset_clients):
+            batch_idx += 1
             print("{} clients are in federated training".format(len(data_clients)))
             loss_batch_clients = []
             grads_batch_clients = []
@@ -303,75 +276,103 @@ if __name__ == '__main__':
                 print("aggregation finished in %f" % (end_enc - start))
                 loss_value = aggregate_losses([item * client_weight for item in loss_batch_clients])
 
-            elif args.experiment == "sparse_he":
+            elif args.experiment == "batch_zero":
+                # clipping
                 grads_batch_clients = [
-                    clip_gradients(item, -1 * clip / num_clients, clip / num_clients)
+                    clip_gradients(item, -clip/num_clients, clip/num_clients)
                     for item in grads_batch_clients
                 ]
 
-                # sparse compression and encryption per clients
-                enc_sparse_grads_clients = []   # (enc_values, indices, shape)
+                # check all zero batches
+                enc_grads_batch_clients = []
+                enc_grads_shape_batch_clients = []
+
                 for grad_client in grads_batch_clients:
-                    enc_values_client = []
-                    indices_client = []
-                    shape_client = []
+                    all_zero = True
                     for component in grad_client:
-                        idxs, vals = extract_sparse_components(component.numpy())
-                        enc_vals = [encryption.encrypt(publickey, v) for v in vals]
-                        enc_values_client.append(enc_vals)
-                        indices_client.append(idxs)
-                        shape_client.append(component.shape)
-                    enc_sparse_grads_clients.append((enc_values_client, indices_client, shape_client))
+                        arr = component.numpy() if hasattr(component, 'numpy') else component
+                        if not np.all(arr == 0):
+                            all_zero = False
+                            break
 
-                # central server: aggregation by index
-                agg_grads_dict = [defaultdict(list) for _ in range(len(grads_batch_clients[0]))]
-                shapes = enc_sparse_grads_clients[0][2]
+                    if all_zero:
+                        enc_grads_batch_clients.append(None)
+                        enc_grads_shape_batch_clients.append(None)
+                    else:
+                        enc_client = []
+                        shapes_client = []
+                        for component in grad_client:
+                            arr = component.numpy() if hasattr(component, 'numpy') else component
+                            enc_g, enc_shape = encryption.encrypt_matrix_batch(
+                                publickey,
+                                arr,
+                                bit_width=q_width,
+                                r_max=clip
+                            )
+                            enc_client.append(enc_g)
+                            shapes_client.append(enc_shape)
+                        enc_grads_batch_clients.append(enc_client)
+                        enc_grads_shape_batch_clients.append(shapes_client)
 
-                for client_vals, client_idxs, _ in enc_sparse_grads_clients:
-                    for i in range(len(client_vals)):
-                        for idx, val in zip(client_idxs[i], client_vals[i]):
-                            agg_grads_dict[i][idx].append(val)
+                skip_cnt = sum(1 for c in enc_grads_batch_clients if c is None)
+                skip_ratio = skip_cnt / num_clients
+                skip_log_array.append([epoch, batch_idx, skip_ratio])
 
-                # communication data size calculation
-                total_enc_bytes = 0
-                total_idx_bytes = 0
-                total_nonzero_count = 0
+                # aggregation
+                #num_layers = len(next(c for c in enc_grads_batch_clients if c is not None))
+                ###
+                non_none = [c for c in enc_grads_batch_clients if c is not None]
+                if non_none:
+                    num_layers = len(non_none[0])
+                else:
+                    num_layers = len(model.trainable_variables)
+                ###
+                
+                agg_enc_grads = []
+                for layer_idx in range(num_layers):
 
-                for enc_vals, idxs, _ in enc_sparse_grads_clients:
-                    for layer_enc_vals, layer_idxs in zip(enc_vals, idxs):
-                        total_nonzero_count += len(layer_idxs)
-                        total_idx_bytes += len(layer_idxs) * 4  # int32 index: 4 bytes
-                        for enc_val in layer_enc_vals:
-                            total_enc_bytes += get_encrypted_value_size(enc_val)
+                    ciphers = [
+                        client[layer_idx]
+                        for client in enc_grads_batch_clients
+                        if client is not None
+                    ]
+                    if ciphers:
+                        agg = reduce(encryption.add_ciphertexts, ciphers)
+                    else:
+                        agg = None
+                    agg_enc_grads.append(agg)
 
-                total_comm_bytes = total_enc_bytes + total_idx_bytes
-                num_params = np.sum([np.prod(var.shape) for var in model.trainable_variables])
-                dense_bytes = num_params * 512  # Paillier 2048bit = 512 bytes
-                saving_ratio = (dense_bytes - total_comm_bytes) / dense_bytes * 100
+                # 
+                loss_batch_clients = [encryption.encrypt(publickey, item) for item in loss_batch_clients]
+                enc_loss = reduce(encryption.add_ciphertexts, loss_batch_clients)
+                loss_value = encryption.decrypt(privatekey, enc_loss)
 
-                comm_log_array.append([
-                    epoch,
-                    dense_bytes,
-                    total_comm_bytes,
-                    saving_ratio,
-                ])
+                # decryption
+                # common_shapes = next(
+                #     shapes for shapes in enc_grads_shape_batch_clients
+                #     if shapes is not None
+                # )
+                ###
+                non_none_shapes = [s for s in enc_grads_shape_batch_clients if s is not None]
+                if non_none_shapes:
+                    common_shapes = non_none_shapes[0]
+                else:
+                    common_shapes = [var.shape for var in model.trainable_variables]
+                ###
 
-                # decrypt after aggregate -> restore dense
+
                 grads = []
-                for i, grad_layer_dict in enumerate(agg_grads_dict):
-                    shape = shapes[i]
-                    final_values = []
-                    final_indices = []
-                    for idx, cipher_list in grad_layer_dict.items():
-                        sum_enc = aggregate_ciphertexts(cipher_list)
-                        dec_val = encryption.decrypt(privatekey, sum_enc)
-                        final_values.append(dec_val)
-                        final_indices.append(idx)
-                    dense_grad = reconstruct_dense_from_sparse(final_indices, final_values, shape)
-                    grads.append(dense_grad)
+                for i, enc in enumerate(agg_enc_grads):
+                    if enc is None:
+                        grads.append(np.zeros(common_shapes[i], dtype=np.float32))
+                    else:
+                        plain = encryption.decrypt_matrix_batch(
+                            privatekey,
+                            enc,
+                            common_shapes[i]
+                        )
+                        grads.append(plain)
 
-                client_weight = 1.0 / num_clients
-                loss_value = aggregate_losses([item * client_weight for item in loss_batch_clients])
 
 
             # federated_lr_batch.py
@@ -579,8 +580,9 @@ if __name__ == '__main__':
     np.savetxt(os.path.join(log_dir, 'test_accuracy.txt'), test_accuracy_results)
     np.savetxt(os.path.join(log_dir, 'epoch_time.txt'), epoch_time_array)
     np.savetxt(os.path.join(log_dir, 'sparsity.txt'), sparsity_array_per_layer)
-    if args.experiment == "sparse_he" and len(comm_log_array)>0:
-        np.savetxt(os.path.join(log_dir, 'comm_saving.txt'), comm_log_array)
+    if args.experiment == "batch_zero" and len(skip_log_array)>0:
+        np.savetxt(os.path.join(log_dir, 'skip_ratio.txt'), skip_log_array)
+
     
     # serialize model to JSON
 #    model_json = model.to_json()

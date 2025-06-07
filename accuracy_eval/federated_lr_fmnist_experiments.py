@@ -6,6 +6,7 @@ from tensorflow import keras
 import numpy as np
 from sklearn.metrics import accuracy_score
 from collections import defaultdict
+from collections import deque
 # import matplotlib.pyplot as plt
 # import pysnooper
 import argparse
@@ -196,7 +197,7 @@ if __name__ == '__main__':
     parser.add_argument('--experiment', type=str, default="batch_zero",
                         choices=["plain", "batch", "only_quan", "aciq_quan", "clip_quan", "batch_zero"])
     parser.add_argument('--num_clients', type=int, default=10)
-    parser.add_argument('--num_epochs', type=int, default=20)
+    parser.add_argument('--num_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--q_width', type=int, default=8)
     parser.add_argument('--clip', type=float, default=0.3)
@@ -235,6 +236,7 @@ if __name__ == '__main__':
 
     total_train_start = time.time()
 
+    ENCRYPTED_ZERO = publickey.encrypt(0) ## zero encrypted constant value
 
     for epoch in range(num_epochs):
         batch_idx = 0
@@ -326,44 +328,43 @@ if __name__ == '__main__':
                         len(enc_grads_skip_mask_batch_clients[c][layer_idx])
                         for c in range(num_clients)
                     )
+
                     comp_blocks = []
                     # 클라이언트별로 enc_blocks는 skip_mask=True에 해당하는 것만 있음 → pop(0) 사용
-                    enc_block_ptrs = [list(enc_grads_batch_clients[c][layer_idx]) for c in range(num_clients)]
+                    enc_block_ptrs = [deque(enc_grads_batch_clients[c][layer_idx]) for c in range(num_clients)]
 
                     for b in range(n_blocks):
                         blocks_to_sum = []
                         for c in range(num_clients):
                             skip_mask = enc_grads_skip_mask_batch_clients[c][layer_idx]
                             if b < len(skip_mask) and skip_mask[b]:
-                                blocks_to_sum.append(enc_block_ptrs[c].pop(0))
+                                blocks_to_sum.append(enc_block_ptrs[c].popleft())
                             else:
-                                blocks_to_sum.append(publickey.encrypt(0))
+                                blocks_to_sum.append(ENCRYPTED_ZERO)
                         summed = reduce(lambda a, b: a + b, blocks_to_sum)
                         comp_blocks.append(summed)
                     agg_enc_grads.append(comp_blocks)
 
                 loss_value = privatekey.decrypt(agg_enc_loss)
 
-                skip_masks_per_comp = []
-                for layer_idx in range(num_components):
-                    merged = np.logical_or.reduce([
-                        enc_grads_skip_mask_batch_clients[c][layer_idx]
-                        for c in range(num_clients)
-                    ])
-                    merged = merged[:len(agg_enc_grads[layer_idx])]  # 정확히 맞춤
-                    skip_masks_per_comp.append(merged)
+                # skip_masks_per_comp = []
+                # for layer_idx in range(num_components):
+                #     merged = np.logical_or.reduce([
+                #         enc_grads_skip_mask_batch_clients[c][layer_idx]
+                #         for c in range(num_clients)
+                #     ])
+                #     merged = merged[:len(agg_enc_grads[layer_idx])]  # 정확히 맞춤
+                #     skip_masks_per_comp.append(merged)
 
                 grads = []
                 for layer_idx in range(num_components):
                     comp_blocks = agg_enc_grads[layer_idx]
-                    skip_mask_blocks = skip_masks_per_comp[layer_idx]
                     og_shape = enc_grads_shape_batch_clients[0][layer_idx]
 
                     plain = encryption.decrypt_matrix_batch_zero(
                         privatekey,
                         comp_blocks,
                         og_shape,
-                        skip_mask_blocks,
                         batch_size=16,
                         bit_width=q_width,
                         r_max=r_maxs[layer_idx]
@@ -545,6 +546,18 @@ if __name__ == '__main__':
             sparsity_array_per_layer.append(zero_ratio_per_layer)
             print("Gradient sparsity per layer: ", zero_ratio_per_layer)
 
+            # skip ratio log
+            total_skipped = 0
+            total_blocks = 0
+            for c in range(num_clients):
+                for layer_idx in range(num_components):
+                    skip_mask = enc_grads_skip_mask_batch_clients[c][layer_idx]
+                    total_skipped += np.sum(~skip_mask)  # False = skipped
+                    total_blocks += len(skip_mask)
+            skip_ratio = total_skipped / total_blocks if total_blocks > 0 else 0
+            bc_skip_log.append(skip_ratio)
+            print(f"skip ratio: {skip_ratio * 100:.2f}% ({total_skipped}/{total_blocks})")
+
             # save clipping threasholds, r_maxs
             # if args.experiment in ["batch"]:
             #     clip_thresholds_array.append(clipping_thresholds)
@@ -581,7 +594,6 @@ if __name__ == '__main__':
     np.savetxt(os.path.join(log_dir, 'epoch_time.txt'), epoch_time_array)
     np.savetxt(os.path.join(log_dir, 'sparsity.txt'), sparsity_array_per_layer)
     np.savetxt(os.path.join(log_dir, 'skip_ratio.txt'), bc_skip_log)
-
     
     # serialize model to JSON
 #    model_json = model.to_json()

@@ -241,11 +241,7 @@ def encrypt_matrix_batch_zero(public_key: PaillierPublicKey, A, epoch, batch_siz
 
     # block 단위 skip_mask, 3 epoch 이전에는 skip 비활성화.
     # skip_mask_blocks = (np.abs(Q) > 1e-6).reshape(-1, batch_size).any(axis=1)
-    if epoch < 3:
-        num_blocks = Q.shape[0] // batch_size
-        skip_mask_blocks = np.ones(num_blocks, dtype=bool)
-    else:
-        skip_mask_blocks = (Q != 0).reshape(-1, batch_size).any(axis=1)
+    skip_mask_blocks = (Q != 0).reshape(-1, batch_size).any(axis=1)
 
     # print("skip mask blocks: ", skip_mask_blocks)
 
@@ -265,10 +261,12 @@ def encrypt_matrix_batch_zero(public_key: PaillierPublicKey, A, epoch, batch_siz
 
     # Paillier encryption
     # encrypt_A = Parallel(n_jobs=N_JOBS)(delayed(public_key.encrypt)(num) for num in batched_nums)
+    # print("start encryption")
     encrypt_A = Parallel(n_jobs=N_JOBS)(
         delayed(public_key.encrypt)(batched_nums[i])
         for i in range(len(batched_nums)) if skip_mask_blocks[i]
     )
+    # print("end encryption")
 
     return encrypt_A, og_shape, skip_mask_blocks
 
@@ -473,35 +471,26 @@ def decrypt_matrix_batch(private_key: PaillierPrivateKey, A, og_shape, batch_siz
 
 
 # @pysnooper.snoop('de_batch.log')
-def decrypt_matrix_batch_zero(private_key: PaillierPrivateKey, enc_blocks, og_shape, skip_mask_blocks,
+def decrypt_matrix_batch_zero(private_key: PaillierPrivateKey, enc_blocks, og_shape,
                          batch_size=16, bit_width=8, pad_zero=3, r_max=0.5):
     """
     Batch Zero 모드용 복호화 함수.
     - 서버에서 합쳐진 enc_blocks를 decrypt → skip_mask_blocks 기준으로 0 블록 채우기 → unpack → unquantize
     """
     # 1) 암호문 블록 전부 복호화
+    # print("start decryption")
     decrypted = Parallel(n_jobs=N_JOBS)(delayed(private_key.decrypt)(blk) for blk in enc_blocks)
     decrypted = np.array(decrypted)
+    # print("end decryption")
 
-    # 2) skip_mask_blocks 적용해서 건너뛸 블록은 0 으로 채운다
-    full_blocks = []
-    idx = 0
-    for valid in skip_mask_blocks:
-        if valid:
-            full_blocks.append(decrypted[idx])
-            idx += 1
-        else:
-            full_blocks.append(0)
-    full_blocks = np.array(full_blocks)
-
-    # 3) Unpack: 각 big_int를 batch_size개의 two_comp 값으로 분리
-    block_count = len(full_blocks)
+    # 2) Unpack: 각 big_int를 batch_size개의 two_comp 값으로 분리
+    block_count = len(decrypted)
     total_elems = block_count * batch_size
     un_batched = np.zeros(total_elems, dtype=int)
     mask_len = bit_width + pad_zero
 
     for j in range(block_count):
-        big_int = int(full_blocks[j])
+        big_int = int(decrypted[j])
         for i in range(batch_size):
             shift = (batch_size - 1 - i) * mask_len
             mask_ = ((1 << mask_len) - 1) << shift
@@ -509,18 +498,17 @@ def decrypt_matrix_batch_zero(private_key: PaillierPrivateKey, enc_blocks, og_sh
             # signed int 복원
             un_batched[j * batch_size + i] = two_comp_to_true_(two_comp_val, bit_width, pad_zero)
 
-    # 4) Padding 제거
+    # 3) Padding 제거
     num_elements = int(np.prod(og_shape))
     un_batched = un_batched[:num_elements]
     # print("[DEBUG] Sample unpacked ints (first 20):", un_batched[:20])
 
-    # 5) Shape 복원
+    # 4) Shape 복원
     re = un_batched.reshape(og_shape)
 
-    # 6) unquantize
+    # 5) unquantize
     result = unquantize_matrix(re, bit_width, r_max)
     # print(f"[DEBUG] Unquantize 직후 복원 float: min={np.min(result):.6f}, max={np.max(result):.6f}")
-
 
     return result
 

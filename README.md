@@ -4,7 +4,7 @@ This repository contains an enhanced implementation of BatchCrypt based on the A
 **"BatchCrypt: Efficient Homomorphic Encryption for Cross-Silo Federated Learning"**  
 Original authors: [ATC'20 Paper](https://www.usenix.org/conference/atc20/presentation/ju)
 
-> Enhanced by **Kunha Kim**, Hankuk University of Foreign Studies.
+> Enhanced by **Geonha Kim**, Hankuk University of Foreign Studies.
 
 ## Features
 
@@ -12,7 +12,7 @@ Original authors: [ATC'20 Paper](https://www.usenix.org/conference/atc20/present
 - Demonstrates significant reductions in training time with minimal impact on accuracy.
 - Includes clipped quantization, batching, and homomorphic encryption based on the Paillier cryptosystem.
 
-detail features:
+detail features in: BatchCrypt/paper/Contribution_Overview.pdf
 
 ## Recommended Setup
 

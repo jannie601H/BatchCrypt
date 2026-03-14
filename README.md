@@ -41,4 +41,4 @@ including:
 The accepted paper extends this implementation by introducing **skip-threshold–based experimentation** 
 and additional empirical analysis.
 
-paper: /paper/
+paper in: BatchCrypt/paper/research_paper.pdf

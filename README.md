@@ -30,13 +30,12 @@ Authors: Yoo-Bin Tae, Su-Jeong Park, Geon-Ha Kim, Seung-Ho Lim
 
 ### Contribution of this repository
 
-The core implementation of **BatchCrypt Zero-Skipping** was developed by **Kunha Kim**, 
+The core implementation of **BatchCrypt Zero-Skipping** was developed by **Geonha Kim**, 
 including:
 
-- Implementation of zero-skipping homomorphic encryption
-- Block-level gradient sparsity detection
-- Integration with BatchCrypt batching framework
-- Federated learning experiment pipeline
+- Designed and implemented the BatchCrypt Zero-Skipping method to eliminate unnecessary homomorphic encryption of zero-valued gradient blocks.
+- Designed and implemented the aggregation procedure to correctly handle skipped blocks during encrypted federated learning aggregation.
+- Integration of the zero-skipping mechanism into the BatchCrypt batching and encryption pipeline.
 
 The accepted paper extends this implementation by introducing **skip-threshold–based experimentation** 
 and additional empirical analysis.
